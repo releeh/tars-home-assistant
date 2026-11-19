@@ -1,0 +1,1160 @@
+# =====================================================================
+# TARS for the ESP32-S3-BOX-3
+# Animated emoji face, info screen, chat display, tap/poke reactions,
+# hold-to-talk, and the custom "Hey TARS" wake word.
+# Layered on top of the official ESPHome voice-assistant package.
+#
+# Edit the substitutions below to match YOUR Home Assistant entities.
+# Anything you don't have can point at an entity that doesn't exist;
+# the screen just shows "--" (or the door alert never fires).
+# =====================================================================
+
+substitutions:
+  name: tars-box
+  friendly_name: TARS Box
+
+  # Info screen tiles and weather
+  outside_temp_sensor: sensor.outdoor_temperature
+  inside_temp_sensor: sensor.thermostat_current_temperature
+  room_temp_sensor: sensor.office_temperature
+  room_label: OFFICE
+  inside_humidity_sensor: sensor.thermostat_current_humidity
+  weather_entity: weather.forecast_home
+  holiday_calendar: calendar.holidays
+
+  # Laundry status: input_select / sensor whose state is "Running", "Done" or anything else (= Off)
+  washer_status: input_select.washer_status
+  dryer_status: input_select.dryer_status
+
+  # Fridge / freezer door contact sensors (on = open). The face looks surprised
+  # and the info screen shows a red alert while any of them is open.
+  door_1_sensor: binary_sensor.kitchen_fridge_door
+  door_1_name: Kitchen fridge
+  door_2_sensor: binary_sensor.kitchen_freezer_door
+  door_2_name: Kitchen freezer
+  door_3_sensor: binary_sensor.garage_fridge_door
+  door_3_name: Garage fridge
+  door_4_sensor: binary_sensor.garage_freezer_door
+  door_4_name: Garage freezer
+
+packages:
+  esphome.voice-assistant: "github://esphome/wake-word-voice-assistants/esp32-s3-box-3/esp32-s3-box-3.yaml@main"
+
+esphome:
+  name: ${name}
+  name_add_mac_suffix: false
+  friendly_name: ${friendly_name}
+  platformio_options:
+    board_build.flash_mode: octal
+
+api:
+  encryption:
+    key: !secret tars_box_api_key
+
+wifi:
+  ssid: !secret wifi_ssid
+  password: !secret wifi_password
+
+time:
+  - platform: homeassistant
+    id: ha_time
+
+sensor:
+  - platform: homeassistant
+    id: ha_outside_temp
+    entity_id: ${outside_temp_sensor}
+    internal: true
+  - platform: homeassistant
+    id: ha_inside_temp
+    entity_id: ${inside_temp_sensor}
+    internal: true
+  - platform: homeassistant
+    id: ha_office_temp
+    entity_id: ${room_temp_sensor}
+    internal: true
+  - platform: homeassistant
+    id: ha_inside_humidity
+    entity_id: ${inside_humidity_sensor}
+    internal: true
+  - platform: homeassistant
+    id: ha_tars_humor
+    entity_id: input_number.tars_humor_setting
+    internal: true
+  - platform: homeassistant
+    id: ha_tars_honesty
+    entity_id: input_number.tars_honesty_setting
+    internal: true
+
+text_sensor:
+  # Keep the full question/answer text (the stock firmware cuts them to 32 characters)
+  - id: !extend text_request
+    on_value:
+      lambda: |-
+        ESP_LOGD("info_screen", "request length %d", (int) x.size());
+        id(ha_last_heard).publish_state(x.substr(0, 250));
+  - id: !extend text_response
+    on_value:
+      lambda: |-
+        ESP_LOGD("info_screen", "response length %d", (int) x.size());
+        id(ha_last_said).publish_state(x.substr(0, 250));
+        // Pick a facial expression from the words in the answer
+        std::string s = x;
+        for (auto &ch : s) ch = tolower(ch);
+        auto has = [&](const char *w) { return s.find(w) != std::string::npos; };
+        int m = 0;
+        if (has("sorry") || has("unfortunately") || has("can't") || has("cannot") || has("unable") || has("error")) m = 2;
+        else if (has("love") || has("thank") || has("<3")) m = 6;
+        else if (has("warning") || has("alert") || has("wow") || has("whoa") || has("left open") || has(" is open")) m = 3;
+        else if (has("great") || has("awesome") || has("glad") || has("happy") || has("congrat") || has("nice") || has("!")) m = 1;
+        else if (!s.empty() && s.back() == '?') m = 7;
+        id(face_kw_mood) = m;
+        id(face_kw_until) = millis() + 30000;
+  # Short copies of each exchange for Home Assistant (TARS's journal)
+  - platform: template
+    id: ha_last_heard
+    name: TARS heard
+    icon: mdi:ear-hearing
+    entity_category: diagnostic
+    update_interval: never
+  - platform: template
+    id: ha_last_said
+    name: TARS said
+    icon: mdi:account-voice
+    entity_category: diagnostic
+    update_interval: never
+  - platform: homeassistant
+    id: ha_weather
+    entity_id: ${weather_entity}
+    internal: true
+    on_value:
+      - script.execute: refresh_info_screen
+  - platform: homeassistant
+    id: ha_washer
+    entity_id: ${washer_status}
+    internal: true
+    on_value:
+      - script.execute: refresh_info_screen
+  - platform: homeassistant
+    id: ha_dryer
+    entity_id: ${dryer_status}
+    internal: true
+    on_value:
+      - script.execute: refresh_info_screen
+  - platform: homeassistant
+    id: ha_holiday_name
+    entity_id: ${holiday_calendar}
+    attribute: message
+    internal: true
+  - platform: homeassistant
+    id: ha_holiday_start
+    entity_id: ${holiday_calendar}
+    attribute: start_time
+    internal: true
+
+binary_sensor:
+  - platform: homeassistant
+    id: door_1
+    entity_id: ${door_1_sensor}
+    internal: true
+    on_state:
+      - script.execute: refresh_info_screen
+  - platform: homeassistant
+    id: door_2
+    entity_id: ${door_2_sensor}
+    internal: true
+    on_state:
+      - script.execute: refresh_info_screen
+  - platform: homeassistant
+    id: door_3
+    entity_id: ${door_3_sensor}
+    internal: true
+    on_state:
+      - script.execute: refresh_info_screen
+  - platform: homeassistant
+    id: door_4
+    entity_id: ${door_4_sensor}
+    internal: true
+    on_state:
+      - script.execute: refresh_info_screen
+
+globals:
+  - id: face_kw_mood
+    type: int
+    restore_value: false
+    initial_value: '0'
+  - id: face_kw_until
+    type: uint32_t
+    restore_value: false
+    initial_value: '0'
+  # touch state
+  - id: t_down
+    type: bool
+    initial_value: 'false'
+  - id: t_moved
+    type: bool
+    initial_value: 'false'
+  - id: t_talk_fired
+    type: bool
+    initial_value: 'false'
+  - id: t_x
+    type: int
+    initial_value: '160'
+  - id: t_y
+    type: int
+    initial_value: '120'
+  - id: t_x0
+    type: int
+    initial_value: '0'
+  - id: t_y0
+    type: int
+    initial_value: '0'
+  - id: t_start
+    type: uint32_t
+    initial_value: '0'
+  # tap reactions: 1 giggle 2 silly 3 blush 4 love 5 surprised 6 dizzy
+  - id: tap_react
+    type: int
+    initial_value: '0'
+  - id: react_idx
+    type: int
+    initial_value: '0'
+  - id: react_until
+    type: uint32_t
+    initial_value: '0'
+  - id: react_t0
+    type: uint32_t
+    initial_value: '0'
+  - id: tap_count
+    type: int
+    initial_value: '0'
+  - id: tap_window
+    type: uint32_t
+    initial_value: '0'
+
+# Touch: tap the face for a reaction, hold still ~1 s to talk. Swipes do nothing;
+# the info screen can only be opened from Home Assistant (tap to return).
+touchscreen:
+  - platform: gt911
+    id: box_touch
+    interrupt_pin:
+      number: GPIO3
+      ignore_strapping_warning: true
+    display: s3_box_lcd
+    on_touch:
+      - lambda: |-
+          id(t_down) = true;
+          id(t_x0) = touch.x;
+          id(t_y0) = touch.y;
+          id(t_x) = touch.x;
+          id(t_y) = touch.y;
+          id(t_start) = millis();
+          id(t_moved) = false;
+          id(t_talk_fired) = false;
+    on_update:
+      - lambda: |-
+          for (auto &t : touches) {
+            id(t_x) = t.x;
+            id(t_y) = t.y;
+            if (abs(t.x - id(t_x0)) > 25 || abs(t.y - id(t_y0)) > 25) id(t_moved) = true;
+            break;
+          }
+    on_release:
+      then:
+        - lambda: "id(t_down) = false;\nif (id(t_talk_fired)) return;\nint ph = id(voice_assistant_phase);\nif (ph != 1 && ph != 12) return;\n// Swipes do nothing (the swipe-to-info-screen gesture was removed).\nif (id(t_moved)) return;\n// A tap on the info screen (if it was opened from Home Assistant) goes back to the face.\nif (!(id(screen_mode).current_option() == \"Face\")) {\n  auto call = id(screen_mode).make_call();\n  call.set_option(\"Face\");\n  call.perform();\n  return;\n}\nuint32_t now = millis();\nif (now - id(tap_window) > 1500) id(tap_count) = 0;\nid(tap_window) = now;\nid(tap_count) += 1;\nif (id(tap_count) >= 4) {\n  id(tap_react) = 6;\n  id(react_until) = now + 3500;\n  id(tap_count) = 0;\n  id(face_poke).trigger(\"poked\");\n} else {\n  id(tap_react) = 1 + (id(react_idx) % 5);\n  id(react_idx) += 1;\n  id(react_until) = now + 2200;\n}\nid(react_t0) = now;"
+
+# Fires when someone pokes the face 4+ times in a row; Home Assistant speaks a reply
+event:
+  - platform: template
+    name: Face poked
+    id: face_poke
+    event_types:
+      - poked
+
+switch:
+  - platform: template
+    name: Cue light
+    id: cue_light
+    icon: mdi:alarm-light-outline
+    optimistic: true
+    restore_mode: ALWAYS_OFF
+    on_turn_on:
+      - script.execute: cue_light_timeout
+
+select:
+  - platform: template
+    name: Screen mode
+    id: screen_mode
+    icon: mdi:monitor-eye
+    optimistic: true
+    restore_value: true
+    options:
+      - Face
+      - Info
+    initial_option: Face
+    on_value:
+      - script.execute: refresh_info_screen
+  - platform: template
+    name: Face mood
+    id: face_mood_select
+    icon: mdi:emoticon-outline
+    optimistic: true
+    restore_value: true
+    options:
+      - Auto
+      - Neutral
+      - Happy
+      - Sad
+      - Surprised
+      - Angry
+      - Sleepy
+      - Love
+      - Curious
+    initial_option: Auto
+
+interval:
+  # Hold a finger still on the screen for ~1 second to start talking
+  - interval: 100ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              if (!id(t_down) || id(t_moved) || id(t_talk_fired)) return false;
+              if (millis() - id(t_start) < 900) return false;
+              if (id(voice_assistant_phase) != 1) return false;
+              id(t_talk_fired) = true;
+              return true;
+          then:
+            - script.execute: touch_talk
+  - interval: 20s
+    then:
+      - script.execute: refresh_info_screen
+  # Animate the face (~8 frames a second) while it is on screen
+  - interval: 125ms
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return !id(init_in_progress) && id(voice_assistant_phase) != 10 &&
+                     id(screen_mode).current_option() == "Face";
+          then:
+            - component.update: s3_box_lcd
+
+font:
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 300
+    id: font_clock
+    size: 64
+    glyphs: "0123456789:"
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 600
+    id: font_ampm
+    size: 18
+    glyphs: "AMP"
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 600
+    id: font_value
+    size: 30
+    glyphs: "0123456789-.°%"
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 600
+    id: font_value_sm
+    size: 22
+    glyphs: "0123456789-.°%"
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 500
+    id: font_label
+    size: 13
+    glyphsets:
+      - GF_Latin_Core
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 500
+    id: font_status
+    size: 15
+    glyphsets:
+      - GF_Latin_Core
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 600
+    id: font_title
+    size: 22
+    glyphsets:
+      - GF_Latin_Core
+  - file:
+      type: gfonts
+      family: Figtree
+      weight: 400
+    id: font_chat
+    size: 17
+    glyphsets:
+      - GF_Latin_Core
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: mdi_big
+    size: 44
+    glyphs:
+      - "\U000F0590" # weather-cloudy
+      - "\U000F0591" # weather-fog
+      - "\U000F0592" # weather-hail
+      - "\U000F0593" # weather-lightning
+      - "\U000F0594" # weather-night
+      - "\U000F0595" # weather-partly-cloudy
+      - "\U000F0596" # weather-pouring
+      - "\U000F0597" # weather-rainy
+      - "\U000F0598" # weather-snowy
+      - "\U000F0599" # weather-sunny
+      - "\U000F059D" # weather-windy
+  - file: "https://github.com/Templarian/MaterialDesign-Webfont/raw/master/fonts/materialdesignicons-webfont.ttf"
+    id: mdi_small
+    size: 20
+    glyphs:
+      - "\U000F02DC" # home
+      - "\U000F050F" # thermometer
+      - "\U000F058E" # water-percent
+      - "\U000F072A" # washing-machine
+      - "\U000F0917" # tumble-dryer
+      - "\U000F0290" # fridge
+      - "\U000F036D" # microphone-off
+
+script:
+  # Start a conversation without the wake word (hold-to-talk)
+  - id: touch_talk
+    then:
+      - if:
+          condition:
+            switch.is_off: mute
+          then:
+            - if:
+                condition:
+                  lambda: return id(wake_word_engine_location).current_option() == "On device";
+                then:
+                  - micro_wake_word.stop:
+            - voice_assistant.start:
+
+  # Safety net: the cue light never stays on longer than 45 seconds
+  - id: cue_light_timeout
+    mode: restart
+    then:
+      - delay: 45s
+      - switch.turn_off: cue_light
+
+  # Redraw the screen only while the home/muted screen is showing
+  - id: refresh_info_screen
+    then:
+      - if:
+          condition:
+            lambda: |-
+              return !id(init_in_progress) &&
+                     (id(voice_assistant_phase) == 1 || id(voice_assistant_phase) == 12);
+          then:
+            - component.update: s3_box_lcd
+
+  - id: draw_info_screen
+    then:
+      - lambda: |-
+          auto *d = id(s3_box_lcd);
+          const Color bg(10, 15, 28);
+          const Color card(24, 32, 48);
+          const Color white(240, 244, 250);
+          const Color muted(138, 148, 166);
+          const Color accent(79, 195, 247);
+          const Color warm(255, 183, 77);
+          const Color red(211, 47, 47);
+          const Color green(102, 187, 106);
+          const Color blue(66, 165, 245);
+          const Color grey(96, 106, 124);
+
+          static const char *days[] = {"", "Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"};
+          static const char *months[] = {"", "January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"};
+          static const char *mon_short[] = {"", "Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"};
+
+          d->fill(bg);
+
+          // ---- Date + clock ----
+          auto now = id(ha_time).now();
+          if (now.is_valid()) {
+            d->printf(14, 8, id(font_label), muted, TextAlign::TOP_LEFT, "%s, %s %d",
+                      days[now.day_of_week], months[now.month], now.day_of_month);
+            int h12 = now.hour % 12;
+            if (h12 == 0) h12 = 12;
+            char clock[8];
+            snprintf(clock, sizeof(clock), "%d:%02d", h12, now.minute);
+            d->print(10, 30, id(font_clock), white, TextAlign::TOP_LEFT, clock);
+            int bx, by, bw, bh;
+            d->get_text_bounds(10, 30, clock, id(font_clock), TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+            d->print(10 + bw + 6, 44, id(font_ampm), accent, TextAlign::TOP_LEFT, now.hour < 12 ? "AM" : "PM");
+          }
+
+          // ---- Next holiday (top right) ----
+          std::string hn = id(ha_holiday_name).state;
+          std::string hs = id(ha_holiday_start).state;
+          if (!hn.empty() && hs.size() >= 10) {
+            if (hn.size() > 18) hn = hn.substr(0, 17) + ".";
+            int mo = atoi(hs.substr(5, 2).c_str());
+            int dy = atoi(hs.substr(8, 2).c_str());
+            if (mo >= 1 && mo <= 12) {
+              d->printf(306, 8, id(font_label), accent, TextAlign::TOP_RIGHT, "%s \u00B7 %s %d", hn.c_str(), mon_short[mo], dy);
+            }
+          }
+
+          // ---- Weather (right) ----
+          std::string cond = id(ha_weather).state;
+          const char *icon = "\U000F0590";
+          const char *label = "Cloudy";
+          Color icol = Color(200, 208, 220);
+          if (cond == "sunny") { icon = "\U000F0599"; label = "Sunny"; icol = warm; }
+          else if (cond == "clear-night") { icon = "\U000F0594"; label = "Clear"; icol = Color(179, 157, 219); }
+          else if (cond == "partlycloudy") { icon = "\U000F0595"; label = "Partly cloudy"; icol = warm; }
+          else if (cond == "cloudy") { icon = "\U000F0590"; label = "Cloudy"; }
+          else if (cond == "fog") { icon = "\U000F0591"; label = "Fog"; }
+          else if (cond == "hail") { icon = "\U000F0592"; label = "Hail"; icol = accent; }
+          else if (cond == "lightning" || cond == "lightning-rainy") { icon = "\U000F0593"; label = "Storms"; icol = warm; }
+          else if (cond == "pouring") { icon = "\U000F0596"; label = "Heavy rain"; icol = blue; }
+          else if (cond == "rainy") { icon = "\U000F0597"; label = "Rain"; icol = blue; }
+          else if (cond == "snowy" || cond == "snowy-rainy") { icon = "\U000F0598"; label = "Snow"; icol = Color(225, 245, 254); }
+          else if (cond == "windy" || cond == "windy-variant") { icon = "\U000F059D"; label = "Windy"; }
+          d->print(262, 30, id(mdi_big), icol, TextAlign::TOP_CENTER, icon);
+          float out = id(ha_outside_temp).state;
+          if (!std::isnan(out)) {
+            d->printf(262, 76, id(font_value), white, TextAlign::TOP_CENTER, "%.0f\u00B0", out);
+          }
+          d->print(262, 108, id(font_label), muted, TextAlign::TOP_CENTER, label);
+
+          // ---- Three tiles ----
+          auto tile = [&](int x, const char *ic, Color icc, const char *lab, float v, bool pct) {
+            d->filled_rectangle(x, 130, 94, 52, card);
+            d->print(x + 7, 135, id(mdi_small), icc, TextAlign::TOP_LEFT, ic);
+            d->print(x + 30, 138, id(font_label), muted, TextAlign::TOP_LEFT, lab);
+            if (std::isnan(v)) {
+              d->print(x + 8, 156, id(font_value_sm), grey, TextAlign::TOP_LEFT, "--");
+            } else if (pct) {
+              d->printf(x + 8, 156, id(font_value_sm), white, TextAlign::TOP_LEFT, "%.0f%%", v);
+            } else {
+              d->printf(x + 8, 156, id(font_value_sm), white, TextAlign::TOP_LEFT, "%.0f\u00B0", v);
+            }
+          };
+          tile(10, "\U000F02DC", accent, "INSIDE", id(ha_inside_temp).state, false);
+          tile(113, "\U000F050F", warm, "${room_label}", id(ha_office_temp).state, false);
+          tile(216, "\U000F058E", blue, "HUMIDITY", id(ha_inside_humidity).state, true);
+
+          // ---- Status bar: fridge alert takes priority, otherwise laundry ----
+          std::vector<std::string> open;
+          if (id(door_1).state) open.push_back("${door_1_name}");
+          if (id(door_2).state) open.push_back("${door_2_name}");
+          if (id(door_3).state) open.push_back("${door_3_name}");
+          if (id(door_4).state) open.push_back("${door_4_name}");
+          if (!open.empty()) {
+            d->filled_rectangle(10, 188, 300, 32, red);
+            d->print(18, 194, id(mdi_small), white, TextAlign::TOP_LEFT, "\U000F0290");
+            std::string msg = open[0] + " open!";
+            if (open.size() > 1) msg = open[0] + " +" + std::to_string(open.size() - 1) + " open!";
+            d->print(46, 196, id(font_status), white, TextAlign::TOP_LEFT, msg.c_str());
+          } else {
+            auto machine = [&](int x, const char *ic, const char *name, const std::string &st) {
+              d->filled_rectangle(x, 188, 147, 32, card);
+              Color c = grey;
+              std::string txt = "Off";
+              if (st == "Running") { c = blue; txt = "Running"; }
+              else if (st == "Done") { c = green; txt = "Done"; }
+              d->print(x + 8, 194, id(mdi_small), c, TextAlign::TOP_LEFT, ic);
+              d->printf(x + 34, 196, id(font_status), st == "Running" || st == "Done" ? white : muted,
+                        TextAlign::TOP_LEFT, "%s %s", name, txt.c_str());
+            };
+            machine(10, "\U000F072A", "Washer", id(ha_washer).state);
+            machine(163, "\U000F0917", "Dryer", id(ha_dryer).state);
+          }
+
+  # ------------------------------------------------------------------
+  # Interactive emoji face. st: 0 idle, 1 listening, 2 thinking,
+  # 3 replying, 4 muted, 5 error, 6 timer finished
+  # ------------------------------------------------------------------
+  - id: draw_face
+    parameters:
+      st: int
+    then:
+      - lambda: |-
+          auto *d = id(s3_box_lcd);
+          const uint32_t ms = millis();
+          auto now = id(ha_time).now();
+          const Color bg(12, 16, 30);
+          const Color dim(84, 94, 124);
+          const Color ink(72, 40, 14);
+          const Color white(255, 255, 255);
+          const Color tongue(232, 84, 104);
+          const Color tearc(96, 176, 255);
+          d->fill(bg);
+
+          // ---------- mood: 0 neutral 1 happy 2 sad 3 surprised 4 angry 5 sleepy 6 love 7 curious
+          int mood = 0;
+          int sel = (int) id(face_mood_select).active_index().value_or(0);
+          if (sel > 0) {
+            mood = sel - 1;
+          } else if (ms < id(face_kw_until)) {
+            mood = id(face_kw_mood);
+          } else if (id(door_1).state || id(door_2).state ||
+                     id(door_3).state || id(door_4).state) {
+            mood = 3;
+          } else if (now.is_valid() && (now.hour >= 23 || now.hour < 6)) {
+            mood = 5;
+          }
+          if ((st == 1 || st == 2 || st == 3) && mood == 5) mood = 0;
+
+          // ---------- cue light (on while telling a joke)
+          bool cue = id(cue_light).state;
+          static uint32_t last_reply = 0;
+          if (st == 3) last_reply = ms;
+          if (cue && (st == 1 || (st == 0 && last_reply > 0 && ms - last_reply > 4000))) {
+            id(cue_light).turn_off();
+            cue = false;
+          }
+          bool joking = cue && sel == 0 && (st == 0 || st == 3);
+
+          // ---------- touch: reactions and finger tracking
+          int react = (ms < id(react_until)) ? id(tap_react) : 0;
+          if (st != 0 && st != 4) react = 0;
+          bool touching = id(t_down) && (st == 0 || st == 1 || st == 4);
+
+          // ---------- idle fidgets (wink, whistle, eye roll) every so often
+          static uint32_t next_fidget = 40000, fidget_until = 0;
+          static int fidget = 0;
+          if (st == 0 && react == 0 && !touching && !joking && sel == 0 && mood == 0 && ms > next_fidget) {
+            fidget = 1 + (int) (random_uint32() % 3);
+            fidget_until = ms + 2600;
+            next_fidget = ms + 25000 + (random_uint32() % 25000);
+          }
+          if (ms > fidget_until || st != 0 || react || touching) fidget = 0;
+
+          // ---------- pick the emoji
+          enum { NEU, HAPPY, SAD, SURP, ANGRY, SLEEPY, LOVE, CURIOUS, LISTEN, THINK, TALK, ZIP, DEAD, ALARM,
+                 LAUGH, GIGGLE, SILLY, BLUSH, DIZZY, WINK, WHISTLE };
+          int e = mood;
+          if (st == 1) e = LISTEN;
+          else if (st == 2) e = THINK;
+          else if (st == 3) e = TALK;
+          else if (st == 4) e = ZIP;
+          else if (st == 5) e = DEAD;
+          else if (st == 6) e = ALARM;
+          if (joking && st == 0) e = LAUGH;
+          if (fidget == 1) e = WINK;
+          else if (fidget == 2) e = WHISTLE;
+          if (react == 1) e = GIGGLE;
+          else if (react == 2) e = SILLY;
+          else if (react == 3) e = BLUSH;
+          else if (react == 4) e = LOVE;
+          else if (react == 5) e = SURP;
+          else if (react == 6) e = DIZZY;
+
+          // ---------- blink
+          static uint32_t next_blink = 2000, blink_t0 = 0;
+          if (ms > next_blink) { blink_t0 = ms; next_blink = ms + 2200 + (random_uint32() % 4500); }
+          float open = 1.0f;
+          uint32_t bt = ms - blink_t0;
+          if (bt < 160) open = fabsf((float) bt - 80.0f) / 80.0f;
+          if (open < 0.1f) open = 0.1f;
+
+          // ---------- gaze (wanders; follows your finger while you touch the screen)
+          static uint32_t next_look = 0;
+          static float gx = 0, gy = 0, tx = 0, ty = 0;
+          if (ms > next_look) {
+            tx = (float) ((int) (random_uint32() % 15) - 7);
+            ty = (float) ((int) (random_uint32() % 11) - 5);
+            if ((random_uint32() % 3) == 0) { tx = 0; ty = 0; }
+            next_look = ms + 1200 + (random_uint32() % 3800);
+          }
+          float wx = tx, wy = ty;
+          if (st == 1 || st == 3 || st == 6) { wx = 0; wy = 0; }
+          if (e == THINK) { wx = 6.0f + 2.0f * sinf(ms / 400.0f); wy = -6.0f; }
+          if (e == WHISTLE) { wx = -6.0f; wy = -3.0f; }
+          if (fidget == 3) { wx = 8.0f * cosf(ms / 220.0f); wy = -5.0f + 3.0f * sinf(ms / 220.0f); }
+          if (touching) { wx = (id(t_x) - 160) / 13.0f; wy = (id(t_y) - 100) / 13.0f; }
+          if (wx > 9) wx = 9;
+          if (wx < -9) wx = -9;
+          if (wy > 8) wy = 8;
+          if (wy < -8) wy = -8;
+          gx += (wx - gx) * 0.4f;
+          gy += (wy - gy) * 0.4f;
+
+          // ---------- face geometry (squish on tap, bounce, wobble)
+          int cx = 160, cy = 110;
+          float frx = 94.0f, fry = 94.0f + 1.5f * sinf(ms / 900.0f);
+          uint32_t since = ms - id(react_t0);
+          if (id(react_t0) > 0 && since < 600) {
+            float s = 0.09f * (1.0f - since / 600.0f) * sinf(since / 38.0f);
+            frx *= 1.0f + s;
+            fry *= 1.0f - s;
+          }
+          if (e == ALARM) cy -= (int) (8.0f * fabsf(sinf(ms / 170.0f)));
+          if (e == GIGGLE || e == LAUGH) cy += (int) (2.0f * sinf(ms / 60.0f));
+          if (e == DIZZY) cx += (int) (6.0f * sinf(ms / 110.0f));
+          if (touching) { cx += (int) (gx * 0.6f); cy += (int) (gy * 0.5f); }
+
+          Color rim(232, 150, 24), base(255, 203, 50), hl(255, 232, 140);
+          if (e == ANGRY) { rim = Color(200, 60, 34); base = Color(246, 110, 58); hl = Color(255, 160, 116); }
+          if (e == DEAD) { rim = Color(176, 170, 70); base = Color(214, 212, 110); hl = Color(236, 236, 160); }
+
+          // ---------- drawing helpers
+          auto ell = [&](int x0, int y0, int a, int b, Color c) {
+            if (a < 1 || b < 1) return;
+            for (int dy = -b; dy <= b; dy++) {
+              float f = 1.0f - (float) (dy * dy) / (float) (b * b);
+              int w = (int) ((float) a * sqrtf(f > 0 ? f : 0) + 0.5f);
+              d->horizontal_line(x0 - w, y0 + dy, 2 * w + 1, c);
+            }
+          };
+          auto bar = [&](int x1, int y1, int x2, int y2, Color c) {
+            for (int k = -2; k <= 2; k++) d->line(x1, y1 + k, x2, y2 + k, c);
+          };
+          auto heart = [&](int x, int y, int s, Color c) {
+            d->filled_circle(x - s / 2, y - s / 4, s / 2 + 1, c);
+            d->filled_circle(x + s / 2, y - s / 4, s / 2 + 1, c);
+            d->filled_triangle(x - s - 1, y - s / 8, x + s + 1, y - s / 8, x, y + s, c);
+          };
+          auto drop = [&](int x, int y, int r, Color c) {
+            d->filled_circle(x, y, r, c);
+            d->filled_triangle(x - r, y - 1, x + r, y - 1, x, y - 2 * r - 2, c);
+          };
+          // open mouth: lower half-ellipse, optional teeth band and tongue
+          auto mouth_open = [&](int x, int top, int a, int b, int teeth, bool tg) {
+            int tc = b - 4, ta = a / 2, tb = 10;
+            for (int dy = 0; dy <= b; dy++) {
+              float f = 1.0f - (float) (dy * dy) / (float) (b * b);
+              int w = (int) ((float) a * sqrtf(f > 0 ? f : 0) + 0.5f);
+              d->horizontal_line(x - w, top + dy, 2 * w + 1, dy < teeth ? white : ink);
+              if (tg) {
+                int t2 = dy - tc;
+                if (t2 >= -tb && t2 <= tb) {
+                  float g = 1.0f - (float) (t2 * t2) / (float) (tb * tb);
+                  int tw = (int) ((float) ta * sqrtf(g > 0 ? g : 0));
+                  if (tw > w - 3) tw = w - 3;
+                  if (tw > 0) d->horizontal_line(x - tw, top + dy, 2 * tw + 1, tongue);
+                }
+              }
+            }
+          };
+
+          // ---------- extras drawn behind the face
+          if (e == LISTEN) {                                   // sound waves
+            for (int i = 0; i < 3; i++) {
+              int r = (int) frx + 10 + i * 13 + (int) ((ms / 40) % 13);
+              Color wc = i == 0 ? Color(105, 240, 174) : (i == 1 ? Color(70, 170, 125) : Color(40, 100, 76));
+              for (float a = -0.55f; a <= 0.55f; a += 0.07f) {
+                d->filled_circle(cx + (int) (r * cosf(a)), cy + (int) (r * sinf(a)), 2, wc);
+                d->filled_circle(cx - (int) (r * cosf(a)), cy + (int) (r * sinf(a)), 2, wc);
+              }
+            }
+          }
+
+          // ---------- the face
+          ell(cx, cy, (int) frx, (int) fry, rim);
+          ell(cx - 1, cy - 2, (int) frx - 5, (int) fry - 5, base);
+          ell(cx - (int) (frx * 0.46f), cy - (int) (fry * 0.64f), 16, 7, hl);
+
+          int lx = cx - 34 + (int) gx, rxp = cx + 34 + (int) gx;
+          int ey = cy - 18 + (int) gy;
+          int my = cy + 38 + (int) (gy * 0.4f);
+
+          // ---------- cheeks
+          if (e == HAPPY || e == LOVE || e == GIGGLE || e == BLUSH || e == LAUGH || (e == TALK && joking)) {
+            Color ck = (e == BLUSH) ? Color(250, 112, 112) : Color(255, 152, 112);
+            int a = (e == BLUSH) ? 17 : 13;
+            ell(cx - 58, cy + 14, a, a / 2 + 1, ck);
+            ell(cx + 58, cy + 14, a, a / 2 + 1, ck);
+          }
+
+          // ---------- eyes
+          // styles: 0 normal, 1 wide, 2 happy arch, 3 closed, 4 laughing >< , 5 hearts, 6 X, 7 spiral
+          auto eye = [&](int x, int y, int style, bool right) {
+            if (style == 0 || style == 1) {
+              int a = style ? 14 : 11, b = (int) ((style ? 23 : 18) * open);
+              if (b < 2) b = 2;
+              ell(x, y, a, b, ink);
+              if (open > 0.5f) ell(x - a / 3, y - b / 2, style ? 4 : 3, style ? 5 : 4, white);
+            } else if (style == 2) {
+              ell(x, y + 2, 15, 13, ink);
+              ell(x, y + 9, 16, 13, base);
+            } else if (style == 3) {
+              ell(x, y + 2, 14, 8, ink);
+              ell(x, y - 3, 15, 8, base);
+            } else if (style == 4) {
+              int s = right ? -1 : 1;
+              for (int k = -3; k <= 3; k++) {
+                d->line(x - 12 * s, y - 11 + k, x + 10 * s, y + k, ink);
+                d->line(x + 10 * s, y + k, x - 12 * s, y + 11 + k, ink);
+              }
+            } else if (style == 5) {
+              heart(x, y, 15 + (int) (3.0f * sinf(ms / 220.0f)), Color(232, 40, 70));
+            } else if (style == 6) {
+              for (int k = -2; k <= 2; k++) {
+                d->line(x - 11 + k, y - 11, x + 11 + k, y + 11, ink);
+                d->line(x + 11 + k, y - 11, x - 11 + k, y + 11, ink);
+              }
+            } else if (style == 7) {
+              for (int i = 0; i < 36; i++) {
+                float a = i * 0.42f + (right ? -1.0f : 1.0f) * ms / 140.0f;
+                float r = i * 0.42f;
+                d->filled_circle(x + (int) (r * cosf(a)), y + (int) (r * sinf(a)), 2, ink);
+              }
+            }
+          };
+          int es = 0;
+          if (e == SURP || e == LISTEN || e == ALARM) es = 1;
+          else if (e == HAPPY || e == BLUSH) es = 2;
+          else if (e == SLEEPY) es = 3;
+          else if (e == LAUGH || e == GIGGLE) es = 4;
+          else if (e == LOVE) es = 5;
+          else if (e == DEAD) es = 6;
+          else if (e == DIZZY) es = 7;
+          else if (e == TALK) es = joking ? 4 : (mood == 1 ? 2 : (mood == 6 ? 5 : 0));
+          if (e == WINK || e == SILLY) {
+            eye(lx, ey, 0, false);
+            eye(rxp, ey, 2, true);
+          } else {
+            eye(lx, ey, es, false);
+            eye(rxp, ey, es, true);
+          }
+
+          // ---------- brows
+          int by = ey - 28;
+          int br = 0;
+          if (e == ANGRY) br = 1;
+          else if (e == SAD || (e == TALK && mood == 2)) br = 2;
+          else if (e == CURIOUS || e == THINK) br = 3;
+          else if (e == SURP || e == ALARM) br = 4;
+          if (br == 1) {
+            bar(lx - 15, by - 4, lx + 13, by + 6, ink);
+            bar(rxp + 15, by - 4, rxp - 13, by + 6, ink);
+          } else if (br == 2) {
+            bar(lx - 15, by + 5, lx + 13, by - 4, ink);
+            bar(rxp + 15, by + 5, rxp - 13, by - 4, ink);
+          } else if (br == 3) {
+            bar(lx - 13, by + 4, lx + 13, by + 4, ink);
+            bar(rxp - 13, by - 6, rxp + 13, by - 2, ink);
+          } else if (br == 4) {
+            ell(lx, by - 4, 14, 5, ink);
+            ell(lx, by - 1, 15, 5, base);
+            ell(rxp, by - 4, 14, 5, ink);
+            ell(rxp, by - 1, 15, 5, base);
+          }
+
+          // ---------- mouth
+          static uint32_t next_talk = 0;
+          static int talk_h = 8;
+          if (e == TALK) {
+            if (ms > next_talk) { talk_h = 5 + (random_uint32() % 18); next_talk = ms + 70 + (random_uint32() % 90); }
+            if (joking || mood == 1 || mood == 6) {
+              mouth_open(cx, my - 12, 34, 8 + talk_h, 6, true);
+            } else {
+              ell(cx, my, 22, talk_h, ink);
+              if (talk_h > 12) ell(cx, my + talk_h - 7, 11, 5, tongue);
+            }
+          } else if (e == HAPPY || e == LOVE) {
+            mouth_open(cx, my - 14, 38, 26, 7, true);
+          } else if (e == LAUGH || e == GIGGLE) {
+            mouth_open(cx, my - 16, 42, 32, 8, true);
+          } else if (e == SAD || e == ANGRY) {
+            ell(cx, my + 12, 26, 16, ink);
+            ell(cx, my + 17, 29, 16, base);
+          } else if (e == SURP || e == ALARM) {
+            ell(cx, my, 13, 17, ink);
+          } else if (e == CURIOUS || e == THINK) {
+            bar(cx - 8, my + 2, cx + 22, my - 3, ink);
+          } else if (e == ZIP) {
+            bar(cx - 34, my, cx + 34, my, Color(128, 118, 108));
+            for (int x = cx - 30; x <= cx + 30; x += 7) d->vertical_line(x, my - 5, 11, Color(96, 86, 76));
+            d->filled_rectangle(cx + 33, my - 3, 9, 14, Color(176, 176, 188));
+            d->filled_circle(cx + 37, my + 13, 4, Color(176, 176, 188));
+          } else if (e == SILLY) {
+            mouth_open(cx, my - 12, 32, 18, 0, false);
+            ell(cx + 8, my + 10, 12, 14, tongue);
+            d->vertical_line(cx + 8, my + 2, 14, Color(186, 50, 72));
+          } else if (e == SLEEPY) {
+            ell(cx, my + 2, 8, 7, ink);
+          } else if (e == WHISTLE) {
+            ell(cx + 8, my, 7, 8, ink);
+            ell(cx + 8, my, 3, 4, Color(150, 70, 40));
+          } else if (e == DEAD || e == DIZZY) {
+            for (int x = -24; x <= 24; x++)
+              d->filled_circle(cx + x, my + (int) (4.0f * sinf(x / 5.0f + ms / 150.0f)), 2, ink);
+          } else {                                             // gentle smile
+            ell(cx, my - 12, 30, 20, ink);
+            ell(cx, my - 17, 33, 20, base);
+          }
+
+          // ---------- name tag (bottom-right corner of the face)
+          {
+            int nx0 = cx + 44, ny0 = cy + 50;
+            d->filled_rectangle(nx0, ny0, 50, 24, Color(250, 250, 250));
+            d->filled_rectangle(nx0, ny0, 50, 6, Color(214, 48, 49));
+            d->rectangle(nx0, ny0, 50, 24, Color(120, 120, 130));
+            d->print(nx0 + 25, ny0 + 8, id(font_label), Color(30, 30, 40), TextAlign::TOP_CENTER, "TARS");
+          }
+
+          // ---------- extras drawn on top
+          if (e == SAD) {                                      // tear
+            float p = (ms % 1600) / 1600.0f;
+            drop(lx - 8, ey + 16 + (int) (p * 50), 5, tearc);
+          }
+          if (e == LAUGH || e == GIGGLE || (e == TALK && joking)) {   // tears of joy
+            for (int side = -1; side <= 1; side += 2) {
+              for (int j = 0; j < 2; j++) {
+                float p = ((ms + j * 350) % 700) / 700.0f;
+                int x = cx + side * (48 + (int) (p * 46));
+                int y = ey - 6 + (int) (p * p * 70) - (int) (p * 16);
+                d->filled_circle(x, y, 5, tearc);
+              }
+            }
+          }
+          if (e == LOVE) {                                     // floating hearts
+            for (int i = 0; i < 2; i++) {
+              int y = 200 - (int) (((ms / 18) + i * 90) % 180);
+              heart(i ? 290 : 30, y, 9, Color(240, 98, 146));
+            }
+          }
+          if (e == SLEEPY && st == 0) {                        // z's
+            int zy = (int) ((ms / 60) % 30);
+            d->print(244, 58 - zy, id(font_label), Color(170, 180, 214), TextAlign::TOP_LEFT, "z");
+            d->print(258, 40 - zy, id(font_title), Color(170, 180, 214), TextAlign::TOP_LEFT, "Z");
+          }
+          if (e == THINK) {                                    // thinking dots
+            for (int i = 0; i < 3; i++) {
+              bool on = ((ms / 300) % 3) == (uint32_t) i;
+              d->filled_circle(252 + i * 16, 40 - i * 10, on ? 6 : 4, on ? Color(179, 157, 219) : Color(80, 76, 120));
+            }
+          }
+          if (e == WHISTLE) {                                  // music note
+            float p = (ms % 1300) / 1300.0f;
+            int nx = cx + 44 + (int) (p * 24), ny = my - 6 - (int) (p * 36);
+            Color nc(235, 235, 245);
+            d->filled_circle(nx, ny, 4, nc);
+            d->vertical_line(nx + 3, ny - 14, 14, nc);
+            d->line(nx + 3, ny - 14, nx + 10, ny - 9, nc);
+            d->line(nx + 3, ny - 13, nx + 10, ny - 8, nc);
+          }
+          if (e == DIZZY) {                                    // orbiting stars
+            for (int i = 0; i < 3; i++) {
+              float a = ms / 260.0f + i * 2.094f;
+              int sx = cx + (int) (64 * cosf(a)), sy = cy - (int) fry + 4 + (int) (8 * sinf(a));
+              d->filled_circle(sx, sy, 3, white);
+              d->horizontal_line(sx - 6, sy, 13, white);
+              d->vertical_line(sx, sy - 6, 13, white);
+            }
+          }
+
+          // ---------- hold-to-talk progress ring
+          if (id(t_down) && !id(t_moved) && !id(t_talk_fired) && st == 0) {
+            uint32_t held = ms - id(t_start);
+            if (held > 250) {
+              float p = (held - 250) / 650.0f;
+              if (p > 1) p = 1;
+              for (float a = 0; a < p * 6.283f; a += 0.09f)
+                d->filled_circle(cx + (int) ((frx + 9) * sinf(a)), cy - (int) ((fry + 9) * cosf(a)), 3, Color(105, 240, 174));
+            }
+          }
+
+          // ---------- status text, clock, badges
+          if ((st == 0 || st == 4) && now.is_valid() && e != DIZZY) {
+            int h12 = now.hour % 12;
+            if (h12 == 0) h12 = 12;
+            d->printf(312, 6, id(font_label), dim, TextAlign::TOP_RIGHT, "%d:%02d %s", h12, now.minute, now.hour < 12 ? "AM" : "PM");
+          }
+          if (st == 4) {
+            d->filled_rectangle(6, 6, 90, 22, Color(211, 47, 47));
+            d->print(10, 7, id(mdi_small), white, TextAlign::TOP_LEFT, "\U000F036D");
+            d->print(34, 10, id(font_label), white, TextAlign::TOP_LEFT, "MIC OFF");
+          }
+          if (st == 5) d->print(160, 214, id(font_status), Color(239, 83, 80), TextAlign::TOP_CENTER, "Sorry, something went wrong");
+          if (st == 6) d->print(160, 208, id(font_title), Color(255, 183, 77), TextAlign::TOP_CENTER, "Timer done!");
+          if (st == 1) d->print(160, 214, id(font_status), Color(105, 240, 174), TextAlign::TOP_CENTER, "Listening...");
+
+          // ---------- cue light lamp (top left)
+          if (cue) {
+            bool lit = ((ms / 350) % 2) == 0;
+            d->filled_circle(28, 28, 17, Color(70, 46, 8));
+            d->filled_circle(28, 28, 12, lit ? Color(255, 176, 32) : Color(150, 100, 20));
+            d->filled_circle(24, 24, 3, Color(255, 240, 200));
+            d->print(28, 48, id(font_label), Color(255, 176, 32), TextAlign::TOP_CENTER, "JOKE");
+          }
+
+          // ---------- bottom line: reaction quip, or settings / gesture hint
+          if (st == 0) {
+            const char *quip = nullptr;
+            if (react == 1) quip = "That tickles.";
+            else if (react == 2) quip = "Humor setting: engaged.";
+            else if (react == 3) quip = "Flattery noted.";
+            else if (react == 4) quip = "Affection logged.";
+            else if (react == 5) quip = "Oh. Hello.";
+            else if (react == 6) {
+              float hu6 = id(ha_tars_humor).state;
+              quip = (!std::isnan(hu6) && hu6 >= 100) ? "Hands off, pervert." : "Hands off. I am a box.";
+            }
+            if (quip != nullptr) {
+              d->print(160, 216, id(font_status), white, TextAlign::TOP_CENTER, quip);
+            } else if (((ms / 7000) % 2) == 1) {
+              d->print(160, 222, id(font_label), dim, TextAlign::TOP_CENTER, "tap me  ·  hold to talk");
+            } else {
+              float hu = id(ha_tars_humor).state, ho = id(ha_tars_honesty).state;
+              if (!std::isnan(hu) && !std::isnan(ho))
+                d->printf(160, 222, id(font_label), dim, TextAlign::TOP_CENTER, "HUMOR %.0f%%  ·  HONESTY %.0f%%", hu, ho);
+            }
+          }
+
+display:
+  - id: !extend s3_box_lcd
+    pages:
+      - id: !extend idle_page
+        lambda: |-
+          if (id(screen_mode).current_option() == "Face") {
+            id(draw_face).execute(0);
+            id(draw_timer_timeline).execute();
+            id(draw_active_timer_widget).execute();
+          } else {
+            id(draw_info_screen).execute();
+            id(draw_timer_timeline).execute();
+            id(draw_active_timer_widget).execute();
+          }
+      - id: !extend muted_page
+        lambda: |-
+          if (id(screen_mode).current_option() == "Face") {
+            id(draw_face).execute(4);
+            id(draw_timer_timeline).execute();
+            id(draw_active_timer_widget).execute();
+          } else {
+            id(draw_info_screen).execute();
+            it.filled_rectangle(214, 100, 92, 22, Color(211, 47, 47));
+            it.print(220, 101, id(mdi_small), Color(255, 255, 255), TextAlign::TOP_LEFT, "\U000F036D");
+            it.print(244, 104, id(font_label), Color(255, 255, 255), TextAlign::TOP_LEFT, "MIC OFF");
+            id(draw_timer_timeline).execute();
+            id(draw_active_timer_widget).execute();
+          }
+      - id: !extend listening_page
+        lambda: |-
+          if (id(screen_mode).current_option() == "Face") {
+            id(draw_face).execute(1);
+            id(draw_timer_timeline).execute();
+          } else {
+            it.fill(id(listening_color));
+            it.image((it.get_width() / 2), (it.get_height() / 2), id(casita_listening), ImageAlign::CENTER);
+            id(draw_timer_timeline).execute();
+          }
+      - id: !extend thinking_page
+        lambda: |-
+          if (id(screen_mode).current_option() == "Face") {
+            id(draw_face).execute(2);
+            id(draw_timer_timeline).execute();
+          } else {
+            auto wrap = [&](const std::string &text, int x, int y, int maxw, int lh, display::BaseFont *f, Color c, int maxl) -> int {
+              if (maxl <= 0) return 0;
+              std::vector<std::string> words;
+              std::string cur;
+              for (char ch : text) {
+                if (ch == ' ' || ch == '\n') { if (!cur.empty()) { words.push_back(cur); cur.clear(); } }
+                else cur += ch;
+              }
+              if (!cur.empty()) words.push_back(cur);
+              int lines = 0;
+              std::string line;
+              for (size_t i = 0; i < words.size(); i++) {
+                std::string test = line.empty() ? words[i] : line + " " + words[i];
+                int bx, by, bw, bh;
+                it.get_text_bounds(0, 0, test.c_str(), f, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+                if (bw > maxw && !line.empty()) {
+                  if (lines == maxl - 1) { it.printf(x, y + lines * lh, f, c, TextAlign::TOP_LEFT, "%s...", line.c_str()); return lines + 1; }
+                  it.print(x, y + lines * lh, f, c, TextAlign::TOP_LEFT, line.c_str());
+                  lines++;
+                  line = words[i];
+                } else {
+                  line = test;
+                }
+              }
+              if (!line.empty()) { it.print(x, y + lines * lh, f, c, TextAlign::TOP_LEFT, line.c_str()); lines++; }
+              return lines;
+            };
+            it.fill(Color(10, 15, 28));
+            it.print(16, 14, id(font_title), Color(79, 195, 247), TextAlign::TOP_LEFT, "Thinking...");
+            it.print(16, 50, id(font_label), Color(138, 148, 166), TextAlign::TOP_LEFT, "YOU ASKED");
+            wrap(id(text_request).state, 16, 68, 288, 22, id(font_chat), Color(240, 244, 250), 7);
+            id(draw_timer_timeline).execute();
+          }
+      - id: !extend replying_page
+        lambda: |-
+          if (id(screen_mode).current_option() == "Face") {
+            id(draw_face).execute(3);
+            id(draw_timer_timeline).execute();
+          } else {
+            auto wrap = [&](const std::string &text, int x, int y, int maxw, int lh, display::BaseFont *f, Color c, int maxl) -> int {
+              if (maxl <= 0) return 0;
+              std::vector<std::string> words;
+              std::string cur;
+              for (char ch : text) {
+                if (ch == ' ' || ch == '\n') { if (!cur.empty()) { words.push_back(cur); cur.clear(); } }
+                else cur += ch;
+              }
+              if (!cur.empty()) words.push_back(cur);
+              int lines = 0;
+              std::string line;
+              for (size_t i = 0; i < words.size(); i++) {
+                std::string test = line.empty() ? words[i] : line + " " + words[i];
+                int bx, by, bw, bh;
+                it.get_text_bounds(0, 0, test.c_str(), f, TextAlign::TOP_LEFT, &bx, &by, &bw, &bh);
+                if (bw > maxw && !line.empty()) {
+                  if (lines == maxl - 1) { it.printf(x, y + lines * lh, f, c, TextAlign::TOP_LEFT, "%s...", line.c_str()); return lines + 1; }
+                  it.print(x, y + lines * lh, f, c, TextAlign::TOP_LEFT, line.c_str());
+                  lines++;
+                  line = words[i];
+                } else {
+                  line = test;
+                }
+              }
+              if (!line.empty()) { it.print(x, y + lines * lh, f, c, TextAlign::TOP_LEFT, line.c_str()); lines++; }
+              return lines;
+            };
+            it.fill(Color(10, 15, 28));
+            int y = 10;
+            it.print(16, y, id(font_label), Color(138, 148, 166), TextAlign::TOP_LEFT, "YOU ASKED");
+            y += 18;
+            y += wrap(id(text_request).state, 16, y, 288, 18, id(font_label), Color(138, 148, 166), 2) * 18 + 6;
+            it.filled_rectangle(16, y, 288, 1, Color(40, 52, 72));
+            y += 10;
+            wrap(id(text_response).state, 16, y, 288, 21, id(font_chat), Color(240, 244, 250), (222 - y) / 21);
+            id(draw_timer_timeline).execute();
+          }
+      - id: !extend error_page
+        lambda: |-
+          if (id(screen_mode).current_option() == "Face") {
+            id(draw_face).execute(5);
+          } else {
+            it.fill(id(error_color));
+            it.image((it.get_width() / 2), (it.get_height() / 2), id(casita_error), ImageAlign::CENTER);
+          }
+      - id: !extend timer_finished_page
+        lambda: |-
+          if (id(screen_mode).current_option() == "Face") {
+            id(draw_face).execute(6);
+          } else {
+            it.fill(id(idle_color));
+            it.image((it.get_width() / 2), (it.get_height() / 2), id(casita_timer_finished), ImageAlign::CENTER);
+          }
+
+voice_assistant:
+  conversation_timeout: 15s
+
+# Custom wake word. Copy the hey_tars folder next to this file in your
+# ESPHome config directory (/config/esphome/hey_tars/). The stock models
+# (Okay Nabu, Hey Jarvis, Hey Mycroft) still come from the package above,
+# so the box gets two wake word slots: e.g. "Hey TARS" + "Okay Nabu".
+micro_wake_word:
+  models:
+    - id: hey_tars
+      model: hey_tars/hey_tars.json
+

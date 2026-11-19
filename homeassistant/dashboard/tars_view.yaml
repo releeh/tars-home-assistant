@@ -1,0 +1,318 @@
+# TARS dashboard view. Add it to any dashboard: open the dashboard > ⋮ > Edit dashboard >
+# ⋮ > Raw configuration editor, and paste this under `views:` (as one list item).
+# Needs the tars-journal-card resource (homeassistant/www/tars-journal-card.js).
+- title: TARS
+  path: tars
+  icon: mdi:robot-happy-outline
+  type: sections
+  max_columns: 3
+  sections:
+  - type: grid
+    cards:
+    - type: heading
+      heading: TARS
+      icon: mdi:robot-happy-outline
+      badges:
+      - type: entity
+        entity: assist_satellite.tars_box_assist_satellite
+        show_icon: true
+        show_state: true
+    - type: markdown
+      grid_options:
+        columns: full
+      content: |-
+        **🎙️ Last heard:** {{ states('sensor.tars_box_tars_heard') or '—' }}
+
+        **🤖 Last said:** {{ states('sensor.tars_box_tars_said') or '—' }}
+    - type: tile
+      entity: select.tars_box_wake_word
+      name: Wake word
+      icon: mdi:account-voice
+      grid_options:
+        columns: full
+      features:
+      - type: select-options
+    - type: tile
+      entity: select.tars_box_wake_word_2
+      name: Wake word 2 (fallback)
+      icon: mdi:account-voice
+      grid_options:
+        columns: full
+      features:
+      - type: select-options
+    - type: tile
+      entity: switch.tars_box_mute
+      name: Microphone mute
+      icon: mdi:microphone-off
+      grid_options:
+        columns: 6
+    - type: tile
+      entity: switch.tars_box_cue_light
+      name: Cue light
+      icon: mdi:lightbulb-alert-outline
+      grid_options:
+        columns: 6
+    - type: tile
+      entity: media_player.tars_box
+      name: Speaker
+      grid_options:
+        columns: full
+      features:
+      - type: media-player-volume-slider
+    - type: tile
+      entity: select.tars_box_screen_mode
+      name: Screen
+      icon: mdi:monitor
+      grid_options:
+        columns: 6
+      features:
+      - type: select-options
+    - type: tile
+      entity: select.tars_box_face_mood
+      name: Face mood
+      icon: mdi:emoticon-outline
+      grid_options:
+        columns: 6
+      features:
+      - type: select-options
+  - type: grid
+    cards:
+    - type: heading
+      heading: Personality
+      icon: mdi:drama-masks
+    - type: tile
+      entity: input_number.tars_humor_setting
+      name: Humor
+      icon: mdi:emoticon-devil-outline
+      color: deep-orange
+      grid_options:
+        columns: full
+      features:
+      - type: numeric-input
+        style: slider
+    - type: tile
+      entity: input_number.tars_honesty_setting
+      name: Honesty
+      icon: mdi:scale-balance
+      color: blue
+      grid_options:
+        columns: full
+      features:
+      - type: numeric-input
+        style: slider
+    - type: tile
+      entity: input_boolean.tars_conversation_mode
+      name: Conversation mode (keeps listening)
+      icon: mdi:forum-outline
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: markdown
+      text_only: true
+      grid_options:
+        columns: full
+      content: <font color='#999'>Humor 85%+ allows occasional mild swearing. Anyone can also change these by voice.</font>
+    - type: heading
+      heading: Usage
+      icon: mdi:chart-bar
+    - type: tile
+      entity: input_boolean.tars_handle_simple_commands_locally
+      name: Handle simple commands locally (free)
+      icon: mdi:home-lightning-bolt-outline
+      color: green
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: markdown
+      text_only: true
+      grid_options:
+        columns: full
+      content: '<font color=''#999''>On: lights, thermostat, temps, shopping list etc. are handled free by Home Assistant (plain replies, no sass). Off: everything goes to Claude.</font>'
+    - type: tile
+      entity: sensor.tars_replies_today
+      name: Claude replies today
+      icon: mdi:message-reply-text-outline
+      color: teal
+      grid_options:
+        columns: 4
+      vertical: true
+    - type: tile
+      entity: sensor.tars_replies_this_month
+      name: This month
+      icon: mdi:calendar-month
+      color: indigo
+      grid_options:
+        columns: 4
+      vertical: true
+    - type: tile
+      entity: counter.tars_replies
+      name: All time
+      icon: mdi:counter
+      color: grey
+      grid_options:
+        columns: 4
+      vertical: true
+    - type: tile
+      entity: sensor.tars_est_cost_today
+      name: Est. today
+      icon: mdi:cash
+      color: green
+      grid_options:
+        columns: 4
+      vertical: true
+    - type: tile
+      entity: sensor.tars_est_cost_this_month
+      name: Est. this month
+      icon: mdi:cash-multiple
+      color: green
+      grid_options:
+        columns: 4
+      vertical: true
+    - type: tile
+      entity: sensor.tars_est_cost_month_forecast
+      name: Month forecast
+      icon: mdi:cash-clock
+      color: amber
+      grid_options:
+        columns: 4
+      vertical: true
+    - type: tile
+      entity: input_number.tars_est_cost_per_reply
+      name: Avg cost per reply (adjustable)
+      icon: mdi:cash-edit
+      color: grey
+      grid_options:
+        columns: full
+      features:
+      - type: numeric-input
+        style: buttons
+    - type: statistics-graph
+      title: Replies per day
+      entities:
+      - entity: sensor.tars_replies_total
+        name: Replies
+      stat_types:
+      - change
+      period: day
+      days_to_show: 30
+      chart_type: bar
+      hide_legend: true
+      grid_options:
+        columns: full
+        rows: auto
+    - type: markdown
+      grid_options:
+        columns: full
+      content: |-
+        **Estimates only:** Claude replies × the cost-per-reply above. Simple commands handled locally are free and not counted. Real charges: **[Anthropic Console → Usage](https://console.anthropic.com/usage)**. If your real bill differs, adjust the cost per reply until these match.
+
+        <font color='#888'>A typical Claude reply reads ~10k tokens (TARS's instructions, memories and your exposed devices). Roughly 2–3¢ for chat, 4–5¢ for device control Claude has to work out, 8–15¢ with a web search, depending on the model you pick. Counts include the nightly study.</font>
+  - type: grid
+    cards:
+    - type: heading
+      heading: Memory
+      icon: mdi:brain
+    - type: markdown
+      grid_options:
+        columns: full
+      content: |-
+        {%- set ns = namespace(n=0) -%}{%- for i in range(1, 51) -%}{%- set v = states('input_text.tars_memory_%02d' % i) -%}{%- if v not in ['', 'unknown', 'unavailable'] -%}{%- set ns.n = ns.n + 1 -%}
+        **{{ i }}.** {{ v }}
+        {% endif -%}{%- endfor -%}
+        {%- if ns.n == 0 %}_No memories yet._{% endif %}
+
+        <font color='#888'>{{ ns.n }} of 50 slots used. ★1 trivial … ★5 permanent. When full, the least important, least recently confirmed memory is retired to the Forgotten list below (★5 never). To remove one, tell TARS: forget memory number N.</font>
+    - type: markdown
+      grid_options:
+        columns: full
+      content: '**🌙 Last night''s study:** {{ states(''input_text.tars_last_study'') }}'
+    - type: custom:tars-journal-card
+      entity: todo.tars_journal
+      title: Today's conversations (studied and cleared nightly at 3:17 AM)
+      grid_options:
+        columns: full
+        rows: auto
+    - type: custom:tars-journal-card
+      entity: todo.tars_forgotten_memories
+      mode: list
+      title: Forgotten memories (archive, newest first)
+      max_height: 260px
+      grid_options:
+        columns: full
+        rows: auto
+  - type: grid
+    cards:
+    - type: heading
+      heading: Automations
+      icon: mdi:robot-industrial-outline
+    - type: tile
+      entity: automation.tars_conversation_mode_keep_listening
+      name: Keep listening after replies
+      state_content:
+      - last_triggered
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: automation.tars_never_mind_spoken_sign_off
+      name: Never mind sign-off
+      state_content:
+      - last_triggered
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: automation.tars_journal_conversations
+      name: Journal conversations
+      state_content:
+      - last_triggered
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: automation.tars_nightly_study_downtime_learning
+      name: Nightly study (3:17 AM)
+      state_content:
+      - last_triggered
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: automation.tars_face_poked_reply
+      name: Face-poke comebacks
+      state_content:
+      - last_triggered
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: automation.tars_count_paid_claude_replies
+      name: Count paid Claude replies
+      state_content:
+      - last_triggered
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: automation.tars_local_command_handling_toggle
+      name: Sync local-handling switch
+      state_content:
+      - last_triggered
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: select.tars_box_assistant
+      name: Voice pipeline
+      icon: mdi:pipe
+      grid_options:
+        columns: full
