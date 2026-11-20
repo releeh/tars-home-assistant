@@ -176,6 +176,23 @@ binary_sensor:
     internal: true
     on_state:
       - script.execute: refresh_info_screen
+  # The physical mute button (top of the box) cuts the microphones in hardware.
+  # GPIO1 reports its position (LOW = muted), so mirror it on the software mute:
+  # the screen then shows the mute face and "MIC OFF" badge, and the wake word
+  # stops listening, just like muting from Home Assistant.
+  - platform: gpio
+    name: Hardware mute switch
+    id: hw_mute
+    icon: mdi:microphone-off
+    entity_category: diagnostic
+    pin:
+      number: GPIO1
+    filters:
+      - delayed_on_off: 50ms
+    on_release:
+      - lambda: if (!id(mute).state) id(mute).turn_on();
+    on_press:
+      - lambda: if (id(mute).state) id(mute).turn_off();
 
 globals:
   - id: face_kw_mood
