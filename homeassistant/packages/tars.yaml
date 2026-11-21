@@ -16,6 +16,15 @@
 # =====================================================================
 
 input_number:
+  tars_lonely_after_minutes:
+    name: TARS lonely after minutes
+    icon: mdi:timer-sand
+    min: 1
+    max: 240
+    step: 1
+    mode: box
+    unit_of_measurement: min
+    initial: 30
   tars_humor_setting:
     name: TARS humor setting
     min: 0
@@ -42,7 +51,7 @@ input_number:
     icon: mdi:cash-edit
 
 # NOTE: "initial" above resets these on every restart. Once you've settled on
-# your levels, delete the three "initial:" lines so Home Assistant restores the
+# your levels, delete the "initial:" lines so Home Assistant restores the
 # last value instead.
 
 input_boolean:
@@ -55,6 +64,18 @@ input_boolean:
   tars_handle_simple_commands_locally:
     name: TARS handle simple commands locally
     icon: mdi:home-lightning-bolt-outline
+  tars_lonely_tricks:
+    name: TARS lonely tricks
+    icon: mdi:party-popper
+    initial: true
+
+input_select:
+  # Filled in automatically by "TARS - Sync lonely tricks to the box"
+  tars_trick_to_show:
+    name: TARS trick to show
+    icon: mdi:play-box-multiple-outline
+    options:
+      - (no tricks yet)
 
 counter:
   tars_replies:
@@ -67,6 +88,51 @@ input_text:
     name: TARS last study
     max: 255
     icon: mdi:school-outline
+  tars_trick_status:
+    name: TARS trick status
+    max: 255
+    icon: mdi:progress-pencil
+  # Lonely-trick slots the box reads ("caption|recipe"). Filled by the sync automation.
+  tars_trick_01:
+    name: TARS trick 01
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_02:
+    name: TARS trick 02
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_03:
+    name: TARS trick 03
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_04:
+    name: TARS trick 04
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_05:
+    name: TARS trick 05
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_06:
+    name: TARS trick 06
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_07:
+    name: TARS trick 07
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_08:
+    name: TARS trick 08
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_09:
+    name: TARS trick 09
+    max: 255
+    icon: mdi:party-popper
+  tars_trick_10:
+    name: TARS trick 10
+    max: 255
+    icon: mdi:party-popper
   tars_memory_01:
     name: TARS memory 01
     max: 255
@@ -606,6 +672,154 @@ script:
         target:
           entity_id: input_boolean.tars_conversation_ended
 
+  tars_invent_trick:
+    alias: TARS invent a lonely trick
+    description: >-
+      Asks TARS to invent ONE new attention-getting trick (a little drawing with motion plus a caption)
+      for when nobody has talked to him for a while. Adds it to the TARS Tricks list (unchecked = on). Up
+      to 3 attempts if his design fails the checks or repeats a trick he already knows. He keeps at most
+      10: once a new trick is saved, the oldest one is retired (checked ones count too). Progress is shown
+      in 'TARS trick status'. Run by the nightly study, or manually from the dashboard.
+    icon: mdi:party-popper
+    max_exceeded: silent
+    mode: single
+    sequence:
+    - action: input_text.set_value
+      data:
+        value: '{{ now().strftime(''%-I:%M %p'') }} - Checking his trick list...'
+      target:
+        entity_id: input_text.tars_trick_status
+    - action: todo.get_items
+      data:
+        status:
+        - needs_action
+        - completed
+      response_variable: lst
+      target:
+        entity_id: todo.tars_tricks
+    - variables:
+        added: false
+        feedback: ''
+        items: '{{ lst[''todo.tars_tricks''][''items''] }}'
+        names: '{{ lst[''todo.tars_tricks''][''items''] | map(attribute=''summary'') | list }}'
+        newname: ''
+        raw: ''
+        retired: ''
+    - repeat:
+        sequence:
+        - action: input_text.set_value
+          data:
+            value: |-
+              {{ now().strftime('%-I:%M %p') }} - TARS is designing a new trick (attempt {{ repeat.index }} of 3)...
+          target:
+            entity_id: input_text.tars_trick_status
+        - action: conversation.process
+          data:
+            agent_id: conversation.tars
+            language: en
+            text: |-
+              TRICK DESIGN SESSION. Private; nothing is spoken aloud. Do not call any tools or control any devices. When nobody has talked to you for a long time you get lonely, so you do little visible tricks on your screen to get attention. Invent ONE brand-new trick. It must be a DIFFERENT idea with a DIFFERENT name from every trick you already know: {{ names | join(', ') if names | count > 0 else 'none yet' }}. {{ feedback }} Make it fit your personality (dry, theatrical, a little needy). Idea starters: smoking a pipe, blowing bubbles, juggling, holding up a sign, reading a book, playing a tiny guitar, fishing, shining a flashlight, lifting a dumbbell, a paper airplane, a party horn, stargazing. Avoid anything violent, gross, or about drugs and alcohol beyond a classic tobacco pipe.
+
+              You draw it with a tiny recipe language. Your face is a yellow circle of radius 94 centered at 0,0; screen x runs -160 to 160 and y runs -110 (top) to 130 (bottom); y grows downward. Your mouth is at 0,38, your eyes at -34,-18 and 34,-18. Things you hold usually sit near your mouth or to your right around 70,40. Ops are separated by semicolons; fields by commas; colors are #rrggbb:
+              F,<face> sets your expression: neutral happy sad surprised angry sleepy love curious wink whistle giggle silly blush dizzy
+              G,<x>,<y> eye direction, each -9 to 9
+              A,<mode>,<amp>,<ms> motion for every shape AFTER it (so put A first to move a whole prop): b bob up-down, s sway left-right, p pulse size, n none; amp in pixels up to 30, period in ms 200-5000
+              C,x,y,r,col filled circle. O,x,y,r,col circle outline. R,x,y,w,h,col filled rectangle (x,y = its top-left corner). L,x1,y1,x2,y2,col thick line. V,x1,y1,x2,y2,x3,y3,col filled triangle.
+              T,x,y,col,TEXT small text about 13 pixels tall: x is its CENTER and y is its TOP edge (to write on a rectangle, use the rectangle's center x and a y a few pixels below its top; use a color that contrasts with what is behind it). Letters digits spaces ? ! . only, max 12 characters.
+              P,x,y,r,col,n rising smoke or steam puffs. Q,x,y,r,col,n floating bubbles. B,x,y,r,col,n juggling balls in an arc. Z,x,y,r,col,n twinkling sparkles.
+              Shapes are drawn in order, so later ones go on top.
+              Example (sign on a stick): F,happy;A,s,5,1400;L,70,90,70,-10,#8b5a2b;R,40,-30,60,26,#ffffff;T,70,-24,#333333,HI THERE
+              Keep the recipe under 200 characters and at most 12 ops. The caption is what you mutter on screen, under 36 characters.
+
+              Reply with exactly one line and nothing else: NAME | CAPTION | RECIPE
+              NAME is 2-4 words, like Pipe smoking.
+          response_variable: reply
+        - variables:
+            parts: |-
+              {{ (reply.response.speech.plain.speech | default('') | replace('\n', ' ')).split('|') | map('trim') | list }}
+            raw: '{{ reply.response.speech.plain.speech | default('''') | replace(''\n'', '' '') | trim
+              }}'
+        - variables:
+            dup: '{{ parts | count >= 1 and (parts[0] | lower) in (names | map(''lower'') | list) }}'
+            fmt_ok: |-
+              {% set p = parts %}{{ p | count == 3 and p[0] is match('^[A-Za-z0-9 -]{2,40}$') and p[1] is match('^[A-Za-z0-9 ,.!?-]{1,40}$') and p[2] is match('^[A-Za-z][A-Za-z0-9#,;.!? -]{4,209}$') }}
+        - if:
+          - condition: template
+            value_template: '{{ fmt_ok and not dup }}'
+          then:
+          - action: todo.add_item
+            data:
+              item: '{{ parts[0] }}'
+              description: '{{ parts[1] }}|{{ parts[2] }}'
+            target:
+              entity_id: todo.tars_tricks
+          - variables:
+              added: true
+              newname: '{{ parts[0] }}'
+          else:
+          - variables:
+              feedback: |-
+                {% if dup %}Your last idea, {{ parts[0] }}, repeats a trick you already know. Pick a completely different idea.{% else %}Your last reply was not in the required format. Reply with exactly NAME | CAPTION | RECIPE, using only plain letters, digits and the listed punctuation (no apostrophes or quotes).{% endif %}
+        until:
+        - condition: template
+          value_template: '{{ added or repeat.index >= 3 }}'
+    - if:
+      - condition: template
+        value_template: '{{ added }}'
+      then:
+      - alias: At 10 tricks, retire the oldest one (only after the new one was saved)
+        if:
+        - condition: template
+          value_template: '{{ items | count >= 10 }}'
+        then:
+        - action: todo.remove_item
+          target:
+            entity_id: todo.tars_tricks
+          data:
+            item: '{{ items[0].uid }}'
+        - variables:
+            retired: '{{ items[0].summary }}'
+      - action: input_text.set_value
+        data:
+          value: |-
+            {{ now().strftime('%b %-d, %-I:%M %p') }} - Learned a new trick: {{ newname }}{{ ' (retired his oldest, ' ~ retired ~ ', to stay at 10)' if retired else '' }}
+        target:
+          entity_id: input_text.tars_trick_status
+      - variables:
+          result:
+            added: true
+            detail: 'Learned a new trick: {{ newname }}{{ '' (retired '' ~ retired ~ '')'' if retired else
+              '''' }}'
+      else:
+      - action: input_text.set_value
+        data:
+          value: |-
+            {{ now().strftime('%b %-d, %-I:%M %p') }} - No new trick: 3 designs failed the checks. Last try: {{ raw[:120] }}
+        target:
+          entity_id: input_text.tars_trick_status
+      - variables:
+          result:
+            added: false
+            detail: '3 designs failed the checks. Last: {{ raw[:180] }}'
+    - stop: done
+      response_variable: result
+  tars_show_selected_trick:
+    alias: TARS show selected trick
+    description: >-
+      Shows the trick picked in 'TARS trick to show' on the box right now (about 25 seconds). Only enabled
+      (unchecked) tricks are listed.
+    icon: mdi:play-circle-outline
+    mode: restart
+    sequence:
+    - variables:
+        slot: |-
+          {% set opts = state_attr('input_select.tars_trick_to_show', 'options') or [] %}{% set cur = states('input_select.tars_trick_to_show') %}{{ (opts.index(cur) + 1) if cur in opts and cur != '(no tricks yet)' else 0 }}
+    - condition: template
+      value_template: '{{ slot | int(0) > 0 }}'
+    - action: esphome.tars_box_show_trick
+      data:
+        slot: '{{ slot | int }}'
+
 automation:
   - id: tars_conversation_mode_keep_listening
     alias: TARS - Conversation mode (keep listening)
@@ -763,6 +977,9 @@ automation:
               entity_id: todo.tars_journal
             data:
               item: "{{ journal['todo.tars_journal']['items'] | map(attribute='uid') | list }}"
+      - alias: Learn one new lonely trick (keeps the newest 10; the oldest is retired)
+        action: script.tars_invent_trick
+        continue_on_error: true
 
   - id: tars_face_poked_reply
     alias: TARS - Face poked reply
@@ -876,3 +1093,85 @@ automation:
               - action: input_boolean.turn_off
                 target:
                   entity_id: input_boolean.tars_handle_simple_commands_locally
+
+  - id: tars_sync_lonely_tricks
+    alias: TARS - Sync lonely tricks to the box
+    description: >-
+      Copies the enabled (unchecked) tricks from the TARS Tricks list into the 10 'TARS trick' slots the
+      box reads. Check an item to turn that trick off; delete it to forget it. Also keeps the 'TARS trick
+      to show' dropdown listing the enabled tricks (in slot order).
+    mode: queued
+    max: 3
+    triggers:
+    - trigger: state
+      entity_id: todo.tars_tricks
+    - trigger: homeassistant
+      event: start
+    - trigger: time_pattern
+      minutes: /15
+    actions:
+    - action: todo.get_items
+      data:
+        status: needs_action
+      response_variable: lst
+      target:
+        entity_id: todo.tars_tricks
+    - variables:
+        descs: |-
+          {{ lst['todo.tars_tricks']['items'] | map(attribute='description', default='') | map('default', '', true) | select('match', '.+\|.+') | list }}
+    - variables:
+        trick_names: |-
+          {% set ns = namespace(n=[]) %}{% for i in lst['todo.tars_tricks']['items'] %}{% if (i.description | default('', true)) is match('.+\|.+') %}{% set ns.n = ns.n + [i.summary] %}{% endif %}{% endfor %}{{ ns.n[:10] }}
+    - repeat:
+        for_each:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+        - 6
+        - 7
+        - 8
+        - 9
+        - 10
+        sequence:
+        - variables:
+            ent: input_text.tars_trick_{{ '%02d' % repeat.item }}
+            val: '{{ (descs[repeat.item - 1] if descs | count >= repeat.item else '''')[:255] }}'
+        - if:
+          - condition: template
+            value_template: '{{ states(ent) != val }}'
+          then:
+          - action: input_text.set_value
+            data:
+              value: '{{ val }}'
+            target:
+              entity_id: '{{ ent }}'
+    - alias: Keep the trick-to-show dropdown in step with the enabled tricks
+      if:
+      - condition: template
+        value_template: |-
+          {{ (trick_names if trick_names | count > 0 else ['(no tricks yet)']) != state_attr('input_select.tars_trick_to_show', 'options') }}
+      then:
+      - action: input_select.set_options
+        target:
+          entity_id: input_select.tars_trick_to_show
+        data:
+          options: '{{ trick_names if trick_names | count > 0 else [''(no tricks yet)''] }}'
+  - id: tars_show_picked_trick
+    alias: TARS - Show the trick picked on the dashboard
+    description: >-
+      When a trick is picked in the 'TARS trick to show' dropdown, show it on the box right away. Changes
+      made by the sync automation are ignored.
+    mode: restart
+    triggers:
+    - trigger: state
+      entity_id: input_select.tars_trick_to_show
+      not_from:
+      - unavailable
+      - unknown
+    conditions:
+    - condition: template
+      value_template: '{{ trigger.to_state.context.user_id is not none }}'
+    actions:
+    - action: script.tars_show_selected_trick

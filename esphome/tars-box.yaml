@@ -50,6 +50,13 @@ esphome:
 api:
   encryption:
     key: !secret tars_box_api_key
+  actions:
+    # Home Assistant: preview one specific lonely trick (slot 1-10) right now
+    - action: show_trick
+      variables:
+        slot: int
+      then:
+        - lambda: if (slot >= 1 && slot <= 10) id(trick_force_slot) = slot - 1;
 
 wifi:
   ssid: !secret wifi_ssid
@@ -60,6 +67,11 @@ time:
     id: ha_time
 
 sensor:
+  # Minutes of silence before TARS gets lonely and starts doing tricks
+  - platform: homeassistant
+    id: ha_lonely_minutes
+    entity_id: input_number.tars_lonely_after_minutes
+    internal: true
   - platform: homeassistant
     id: ha_outside_temp
     entity_id: ${outside_temp_sensor}
@@ -150,8 +162,53 @@ text_sensor:
     entity_id: ${holiday_calendar}
     attribute: start_time
     internal: true
+  # Lonely tricks TARS invented ("caption|recipe"), synced from the TARS Tricks list
+  - platform: homeassistant
+    id: ha_trick_01
+    entity_id: input_text.tars_trick_01
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_02
+    entity_id: input_text.tars_trick_02
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_03
+    entity_id: input_text.tars_trick_03
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_04
+    entity_id: input_text.tars_trick_04
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_05
+    entity_id: input_text.tars_trick_05
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_06
+    entity_id: input_text.tars_trick_06
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_07
+    entity_id: input_text.tars_trick_07
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_08
+    entity_id: input_text.tars_trick_08
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_09
+    entity_id: input_text.tars_trick_09
+    internal: true
+  - platform: homeassistant
+    id: ha_trick_10
+    entity_id: input_text.tars_trick_10
+    internal: true
 
 binary_sensor:
+  - platform: homeassistant
+    id: ha_lonely_tricks
+    entity_id: input_boolean.tars_lonely_tricks
+    internal: true
   - platform: homeassistant
     id: door_1
     entity_id: ${door_1_sensor}
@@ -193,6 +250,20 @@ binary_sensor:
       - lambda: if (!id(mute).state) id(mute).turn_on();
     on_press:
       - lambda: if (id(mute).state) id(mute).turn_off();
+      # The hardware mute powers the mic ADC down, which loses its settings: set it
+      # up again and restart on-device wake word detection, or the box stays deaf.
+      - delay: 600ms
+      - lambda: |-
+          id(es7210_adc)->setup();
+          if (id(wake_word_engine_location).current_option() == "On device" && !id(mute).state) {
+            id(mww)->stop();
+          }
+      - delay: 500ms
+      - lambda: |-
+          if (id(wake_word_engine_location).current_option() == "On device" && !id(mute).state &&
+              id(voice_assistant_phase) == 1) {
+            id(mww)->start();
+          }
 
 globals:
   - id: face_kw_mood
@@ -247,6 +318,27 @@ globals:
   - id: tap_window
     type: uint32_t
     initial_value: '0'
+  # lonely tricks
+  - id: trick_active
+    type: int
+    restore_value: false
+    initial_value: '-1'
+  - id: trick_face
+    type: int
+    restore_value: false
+    initial_value: '-1'
+  - id: trick_gaze
+    type: int
+    restore_value: false
+    initial_value: '-1'
+  - id: trick_force
+    type: bool
+    restore_value: false
+    initial_value: 'false'
+  - id: trick_force_slot
+    type: int
+    restore_value: false
+    initial_value: '-1'
 
 # Touch: tap the face for a reaction, hold still ~1 s to talk. Swipes do nothing;
 # the info screen can only be opened from Home Assistant (tap to return).
@@ -642,6 +734,10 @@ script:
           if (st != 0 && st != 4) react = 0;
           bool touching = id(t_down) && (st == 0 || st == 1 || st == 4);
 
+          // ---------- lonely tricks (after a long time with nobody around)
+          id(trick_update).execute(st, react != 0 || touching || joking || sel > 0);
+          bool tricking = id(trick_active) >= 0;
+
           // ---------- idle fidgets (wink, whistle, eye roll) every so often
           static uint32_t next_fidget = 40000, fidget_until = 0;
           static int fidget = 0;
@@ -650,7 +746,7 @@ script:
             fidget_until = ms + 2600;
             next_fidget = ms + 25000 + (random_uint32() % 25000);
           }
-          if (ms > fidget_until || st != 0 || react || touching) fidget = 0;
+          if (ms > fidget_until || st != 0 || react || touching || tricking) fidget = 0;
 
           // ---------- pick the emoji
           enum { NEU, HAPPY, SAD, SURP, ANGRY, SLEEPY, LOVE, CURIOUS, LISTEN, THINK, TALK, ZIP, DEAD, ALARM,
@@ -671,6 +767,7 @@ script:
           else if (react == 4) e = LOVE;
           else if (react == 5) e = SURP;
           else if (react == 6) e = DIZZY;
+          if (tricking && st == 0 && id(trick_face) >= 0) e = id(trick_face);
 
           // ---------- blink
           static uint32_t next_blink = 2000, blink_t0 = 0;
@@ -695,6 +792,7 @@ script:
           if (e == WHISTLE) { wx = -6.0f; wy = -3.0f; }
           if (fidget == 3) { wx = 8.0f * cosf(ms / 220.0f); wy = -5.0f + 3.0f * sinf(ms / 220.0f); }
           if (touching) { wx = (id(t_x) - 160) / 13.0f; wy = (id(t_y) - 100) / 13.0f; }
+          if (tricking && id(trick_gaze) >= 0) { wx = id(trick_gaze) / 100 - 50; wy = id(trick_gaze) % 100 - 50; }
           if (wx > 9) wx = 9;
           if (wx < -9) wx = -9;
           if (wy > 8) wy = 8;
@@ -1004,7 +1102,7 @@ script:
           }
 
           // ---------- bottom line: reaction quip, or settings / gesture hint
-          if (st == 0) {
+          if (st == 0 && !tricking) {
             const char *quip = nullptr;
             if (react == 1) quip = "That tickles.";
             else if (react == 2) quip = "Humor setting: engaged.";
@@ -1024,6 +1122,226 @@ script:
               if (!std::isnan(hu) && !std::isnan(ho))
                 d->printf(160, 222, id(font_label), dim, TextAlign::TOP_CENTER, "HUMOR %.0f%%  ·  HONESTY %.0f%%", hu, ho);
             }
+          }
+
+          // ---------- lonely trick props and caption, drawn on top
+          id(trick_draw).execute(cx, cy);
+
+  # ------------------------------------------------------------------
+  # Lonely tricks. After a long silence TARS does little attention-getting
+  # tricks he designed himself (see the TARS Tricks to-do list). Each trick is
+  # stored as "caption|recipe"; the recipe is a tiny drawing language:
+  #   F,<face>  G,<x>,<y>  A,<b|s|p|n>,<amp>,<ms>   (expression, gaze, motion)
+  #   C circle, O ring, R rect, L line, V triangle, T text,
+  #   P smoke puffs, Q bubbles, B juggling balls, Z sparkles
+  # Coordinates are relative to the face centre. Recipes are only ever drawn,
+  # never executed, so a bad one can only look silly.
+  # ------------------------------------------------------------------
+  - id: trick_update
+    parameters:
+      st: int
+      busy: bool
+    then:
+      - lambda: |-
+          // Decides when TARS does a lonely trick, and which one.
+          // st: face state (0 idle). busy: someone is interacting (tap, touch, joke, fixed mood).
+          static uint32_t last_active = 0, next_at = 0, t0 = 0;
+          static int active = -1;
+          const uint32_t ms = millis();
+          if (last_active == 0) last_active = ms;
+          if (st != 0 || busy) last_active = ms;
+          auto now = id(ha_time).now();
+          bool night = now.is_valid() && (now.hour >= 23 || now.hour < 7);
+          bool enabled = id(ha_lonely_tricks).state;
+          float mins = id(ha_lonely_minutes).state;
+          if (std::isnan(mins) || mins < 1) mins = 30;
+          const uint32_t lonely_ms = (uint32_t) (mins * 60000.0f);
+          text_sensor::TextSensor *ts[10] = {id(ha_trick_01), id(ha_trick_02), id(ha_trick_03), id(ha_trick_04), id(ha_trick_05),
+                                             id(ha_trick_06), id(ha_trick_07), id(ha_trick_08), id(ha_trick_09), id(ha_trick_10)};
+          int avail[10];
+          int na = 0;
+          for (int i = 0; i < 10; i++) {
+            const std::string &v = ts[i]->state;
+            if (v.size() > 3 && v.find('|') != std::string::npos) avail[na++] = i;
+          }
+          // previews from Home Assistant: a specific slot, or a random one
+          bool force = id(trick_force);
+          id(trick_force) = false;
+          int fslot = id(trick_force_slot);
+          id(trick_force_slot) = -1;
+          if (fslot >= 0 && (fslot > 9 || ts[fslot]->state.find('|') == std::string::npos)) fslot = -1;
+          if (fslot >= 0) force = true;
+          if (force && st == 0) active = -1;
+          if (active >= 0 && (active >= 10 || ts[active]->state.find('|') == std::string::npos)) active = -1;
+          if (active >= 0 && (st != 0 || busy || ms - t0 > 25000)) {
+            active = -1;
+            next_at = ms + 180000 + (random_uint32() % 240000);
+          }
+          if (active < 0 && na > 0 && st == 0 && !busy) {
+            bool lonely = enabled && !night && (ms - last_active > lonely_ms) && (int32_t) (ms - next_at) > 0;
+            if (force || lonely) {
+              active = fslot >= 0 ? fslot : avail[random_uint32() % na];
+              t0 = ms;
+            }
+          }
+          id(trick_active) = active;
+          id(trick_face) = -1;
+          id(trick_gaze) = -1;
+          if (active >= 0) {
+            const std::string &v = ts[active]->state;
+            std::string r = v.substr(v.find('|') + 1);
+            size_t p = 0;
+            int guard = 0;
+            while (p < r.size() && guard++ < 40) {
+              size_t e = r.find(';', p);
+              if (e == std::string::npos) e = r.size();
+              std::string op = r.substr(p, e - p);
+              p = e + 1;
+              while (!op.empty() && op[0] == ' ') op.erase(0, 1);
+              if (op.size() < 3 || op[1] != ',') continue;
+              char k = toupper(op[0]);
+              if (k == 'F') {
+                std::string f = op.substr(2);
+                for (auto &ch : f) ch = tolower(ch);
+                while (!f.empty() && f.back() == ' ') f.pop_back();
+                static const char *names[] = {"neutral", "happy", "sad", "surprised", "angry", "sleepy", "love", "curious"};
+                for (int n = 0; n < 8; n++)
+                  if (f == names[n]) id(trick_face) = n;
+                if (f == "giggle") id(trick_face) = 15;
+                else if (f == "silly") id(trick_face) = 16;
+                else if (f == "blush") id(trick_face) = 17;
+                else if (f == "dizzy") id(trick_face) = 18;
+                else if (f == "wink") id(trick_face) = 19;
+                else if (f == "whistle") id(trick_face) = 20;
+              } else if (k == 'G') {
+                int gx = 0, gy = 0;
+                sscanf(op.c_str() + 2, "%d,%d", &gx, &gy);
+                gx = std::max(-9, std::min(9, gx));
+                gy = std::max(-9, std::min(9, gy));
+                id(trick_gaze) = (gx + 50) * 100 + (gy + 50);
+              }
+            }
+          }
+
+  - id: trick_draw
+    parameters:
+      cx: int
+      cy: int
+    then:
+      - lambda: |-
+          // Draws the active lonely trick from its recipe, plus its caption. cx, cy: face centre.
+          int a = id(trick_active);
+          if (a < 0 || a > 9) return;
+          text_sensor::TextSensor *ts[10] = {id(ha_trick_01), id(ha_trick_02), id(ha_trick_03), id(ha_trick_04), id(ha_trick_05),
+                                             id(ha_trick_06), id(ha_trick_07), id(ha_trick_08), id(ha_trick_09), id(ha_trick_10)};
+          const std::string &v = ts[a]->state;
+          size_t bar = v.find('|');
+          if (bar == std::string::npos) return;
+          std::string cap = v.substr(0, bar);
+          std::string r = v.substr(bar + 1);
+          auto *d = id(s3_box_lcd);
+          const uint32_t ms = millis();
+          auto col = [](const std::string &s) -> Color {
+            if (s.size() < 7 || s[0] != '#') return Color(255, 255, 255);
+            long c = strtol(s.c_str() + 1, nullptr, 16);
+            return Color((c >> 16) & 255, (c >> 8) & 255, c & 255);
+          };
+          char mode = 'n';
+          int amp = 0, per = 1000, ops = 0;
+          size_t p = 0;
+          int guard = 0;
+          while (p < r.size() && ops < 30 && guard++ < 60) {
+            size_t e = r.find(';', p);
+            if (e == std::string::npos) e = r.size();
+            std::string op = r.substr(p, e - p);
+            p = e + 1;
+            while (!op.empty() && op[0] == ' ') op.erase(0, 1);
+            if (op.size() < 3 || op[1] != ',') continue;
+            char k = toupper(op[0]);
+            std::vector<std::string> f;
+            size_t q = 2;
+            while (q <= op.size() && f.size() < 10) {
+              size_t c = op.find(',', q);
+              if (c == std::string::npos) c = op.size();
+              f.push_back(op.substr(q, c - q));
+              q = c + 1;
+            }
+            auto I = [&](size_t i) -> int { return i < f.size() ? atoi(f[i].c_str()) : 0; };
+            auto K = [&](size_t i) -> Color { return i < f.size() ? col(f[i]) : Color(255, 255, 255); };
+            if (k == 'F' || k == 'G') continue;
+            ops++;
+            if (k == 'A') {
+              mode = (!f.empty() && !f[0].empty()) ? tolower(f[0][0]) : 'n';
+              amp = std::max(0, std::min(30, I(1)));
+              per = std::max(200, std::min(5000, I(2)));
+              continue;
+            }
+            float ph = sinf((ms % per) * 6.2832f / per);
+            int ox = cx, oy = cy;
+            float sc = 1.0f;
+            if (mode == 'b') oy += (int) (amp * ph);
+            else if (mode == 's') ox += (int) (amp * ph);
+            else if (mode == 'p') sc = 1.0f + amp / 100.0f * ph;
+            auto X = [&](int val) { return ox + std::max(-200, std::min(200, val)); };
+            auto Y = [&](int val) { return oy + std::max(-200, std::min(200, val)); };
+            auto S = [&](int val) { return std::max(1, std::min(200, (int) (val * sc))); };
+            switch (k) {
+              case 'C': d->filled_circle(X(I(0)), Y(I(1)), S(I(2)), K(3)); break;
+              case 'O':
+                d->circle(X(I(0)), Y(I(1)), S(I(2)), K(3));
+                d->circle(X(I(0)), Y(I(1)), S(I(2)) + 1, K(3));
+                break;
+              case 'R': d->filled_rectangle(X(I(0)), Y(I(1)), S(I(2)), S(I(3)), K(4)); break;
+              case 'L':
+                for (int t = -1; t <= 1; t++) {
+                  d->line(X(I(0)), Y(I(1)) + t, X(I(2)), Y(I(3)) + t, K(4));
+                  d->line(X(I(0)) + t, Y(I(1)), X(I(2)) + t, Y(I(3)), K(4));
+                }
+                break;
+              case 'V': d->filled_triangle(X(I(0)), Y(I(1)), X(I(2)), Y(I(3)), X(I(4)), Y(I(5)), K(6)); break;
+              case 'T':
+                if (f.size() >= 4) d->print(X(I(0)), Y(I(1)), id(font_label), K(2), TextAlign::TOP_CENTER, f[3].substr(0, 24).c_str());
+                break;
+              case 'P': case 'Q': case 'B': case 'Z': {
+                int n = std::max(1, std::min(8, I(4)));
+                int x0 = X(I(0)), y0 = Y(I(1)), r0 = std::max(1, std::min(60, I(2)));
+                Color c = K(3);
+                for (int i = 0; i < n; i++) {
+                  if (k == 'P' || k == 'Q') {
+                    uint32_t cyc = (k == 'P') ? 2400 : 3600;
+                    float t = ((ms + i * cyc / n) % cyc) / (float) cyc;
+                    int xx = x0 + (int) (sinf(t * 6.0f + i) * (k == 'P' ? 6 : 14));
+                    int yy = y0 - (int) (t * (k == 'P' ? 70 : 110));
+                    int rr = std::max(1, (int) (r0 * (0.6f + t * (k == 'P' ? 0.9f : 0.4f))));
+                    if (k == 'P') {
+                      Color cc((int) (c.r + (12 - c.r) * t), (int) (c.g + (16 - c.g) * t), (int) (c.b + (30 - c.b) * t));
+                      d->filled_circle(xx, yy, rr, cc);
+                    } else {
+                      d->circle(xx, yy, rr, c);
+                      d->filled_circle(xx - rr / 3, yy - rr / 3, std::max(1, rr / 4), Color(255, 255, 255));
+                    }
+                  } else if (k == 'B') {
+                    float ang = ms / 420.0f + i * 6.2832f / n;
+                    d->filled_circle(x0 + (int) (cosf(ang) * r0), y0 - (int) (fabsf(sinf(ang)) * r0 * 1.3f), 5, c);
+                  } else {
+                    uint32_t seed = (uint32_t) (i + 1) * 2654435761u;
+                    int xx = x0 + (int) (seed % (uint32_t) (2 * r0 + 1)) - r0;
+                    int yy = y0 + (int) ((seed >> 9) % (uint32_t) (2 * r0 + 1)) - r0;
+                    float tw = sinf(ms / 180.0f + i * 1.7f);
+                    if (tw > 0) {
+                      int s = 1 + (int) (tw * 4);
+                      d->horizontal_line(xx - s, yy, 2 * s + 1, c);
+                      d->vertical_line(xx, yy - s, 2 * s + 1, c);
+                    }
+                  }
+                }
+              } break;
+              default: break;
+            }
+          }
+          if (!cap.empty()) {
+            d->filled_rectangle(0, 210, 320, 30, Color(12, 16, 30));
+            d->print(160, 216, id(font_status), Color(255, 214, 120), TextAlign::TOP_CENTER, cap.substr(0, 40).c_str());
           }
 
 display:
@@ -1175,3 +1493,10 @@ micro_wake_word:
     - id: hey_tars
       model: hey_tars/hey_tars.json
 
+button:
+  - platform: template
+    name: Show a lonely trick now
+    id: show_trick_now
+    icon: mdi:party-popper
+    on_press:
+      - lambda: id(trick_force) = true;

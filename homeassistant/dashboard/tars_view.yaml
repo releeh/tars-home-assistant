@@ -245,6 +245,94 @@
   - type: grid
     cards:
     - type: heading
+      heading: Lonely tricks
+      icon: mdi:party-popper
+    - type: tile
+      entity: input_boolean.tars_lonely_tricks
+      name: Do tricks when lonely
+      icon: mdi:party-popper
+      color: amber
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: input_number.tars_lonely_after_minutes
+      name: Lonely after (minutes of silence)
+      icon: mdi:timer-sand
+      grid_options:
+        columns: full
+      features:
+      - type: numeric-input
+        style: buttons
+    - type: todo-list
+      entity: todo.tars_tricks
+      title: Tricks he has learned
+      hide_create: true
+      grid_options:
+        columns: full
+        rows: auto
+    - type: markdown
+      text_only: true
+      grid_options:
+        columns: full
+      content: '<font color=''#999''>Unchecked = on, checked = off, delete = forget it. He invents one new trick every night at 3:17 AM and keeps the newest 10: once he has 10, each new one retires his oldest. Tricks only happen while the box is idle, not between 11 PM and 7 AM, about every 3–7 minutes once nobody has talked to or touched him for the time above. Each lasts ~25 s; talking to or touching him stops it.</font>'
+    - type: tile
+      entity: input_select.tars_trick_to_show
+      name: Show a trick (pick one)
+      icon: mdi:play-box-multiple-outline
+      grid_options:
+        columns: full
+      features:
+      - type: select-options
+      tap_action:
+        action: perform-action
+        perform_action: script.tars_show_selected_trick
+      icon_tap_action:
+        action: perform-action
+        perform_action: script.tars_show_selected_trick
+    - type: tile
+      entity: script.tars_show_selected_trick
+      name: Show it again
+      icon: mdi:replay
+      grid_options:
+        columns: 6
+      tap_action:
+        action: perform-action
+        perform_action: script.tars_show_selected_trick
+      icon_tap_action:
+        action: perform-action
+        perform_action: script.tars_show_selected_trick
+    - type: tile
+      entity: script.tars_invent_trick
+      name: Invent a new trick now
+      icon: mdi:lightbulb-on-outline
+      grid_options:
+        columns: 6
+      tap_action:
+        action: perform-action
+        perform_action: script.turn_on
+        target:
+          entity_id: script.tars_invent_trick
+      icon_tap_action:
+        action: perform-action
+        perform_action: script.turn_on
+        target:
+          entity_id: script.tars_invent_trick
+      state_content:
+      - last_triggered
+    - type: markdown
+      grid_options:
+        columns: full
+      content: |-
+        {% set s = states('input_text.tars_trick_status') %}{% set running = is_state('script.tars_invent_trick', 'on') %}**{{ '🎨 Working on it...' if running else '🎨 Trick workshop' }}**
+
+        {{ s if s not in ['', 'unknown', 'unavailable'] else 'Nothing yet. Tap Invent a new trick now, or wait for tonight.' }}{% if running %}
+
+        <font color='#999'>Usually takes 5-20 seconds.</font>{% endif %}
+  - type: grid
+    cards:
+    - type: heading
       heading: Automations
       icon: mdi:robot-industrial-outline
     - type: tile
@@ -304,6 +392,15 @@
     - type: tile
       entity: automation.tars_local_command_handling_toggle
       name: Sync local-handling switch
+      state_content:
+      - last_triggered
+      grid_options:
+        columns: full
+      features:
+      - type: toggle
+    - type: tile
+      entity: automation.tars_sync_lonely_tricks_to_the_box
+      name: Sync lonely tricks to the box
       state_content:
       - last_triggered
       grid_options:

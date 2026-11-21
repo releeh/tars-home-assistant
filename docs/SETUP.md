@@ -7,7 +7,7 @@ Allow about an hour. The order matters a little: the package refers to the box a
 | ESP box (ESPHome friendly name) | `TARS Box` | `assist_satellite.tars_box_assist_satellite`, `sensor.tars_box_tars_said`, ... |
 | Claude conversation agent | `TARS` | `conversation.tars` |
 | Voice pipelines | `TARS` and `TARS (Claude only)` | used by the local-handling toggle |
-| Local to-do lists | `TARS Journal` and `TARS Forgotten Memories` | `todo.tars_journal`, `todo.tars_forgotten_memories` |
+| Local to-do lists | `TARS Journal`, `TARS Forgotten Memories` and `TARS Tricks` | `todo.tars_journal`, `todo.tars_forgotten_memories`, `todo.tars_tricks` |
 
 ---
 
@@ -20,9 +20,9 @@ Allow about an hour. The order matters a little: the package refers to the box a
      packages: !include_dir_named packages
    ```
 3. **Developer tools → YAML → Check configuration**, then restart Home Assistant.
-4. Create the two to-do lists: **Settings → Devices & services → Add integration → Local To-do**. Add one called `TARS Journal` and another called `TARS Forgotten Memories`.
+4. Create the three to-do lists: **Settings → Devices & services → Add integration → Local To-do**. Add one called `TARS Journal`, one called `TARS Forgotten Memories` and one called `TARS Tricks`.
 
-The package sets humor to 60% and honesty to 90% on every restart (`initial:`). Once you've settled on levels you like, delete those `initial:` lines so your values stick.
+The package sets humor to 60%, honesty to 90%, lonely tricks on and "lonely after" to 30 minutes on every restart (`initial:`). Once you've settled on levels you like, delete those `initial:` lines so your values stick.
 
 ## 2. Add Claude as the brain
 
@@ -100,6 +100,8 @@ Say **"Hey TARS, what's your humor setting?"**
   - poke it four times to annoy it
   - hold a finger still for about 1 second to talk
   - the **Screen mode** select switches to the clock/weather info screen, and a tap there goes back to the face
+  - pressing the physical mute button shows a MIC OFF face; pressing it again turns the mic back on
+- **Lonely tricks:** after 30 minutes with nobody talking to him (adjustable), TARS does a little ~25 s trick every few minutes to get attention: smoking a pipe, waving a flag, juggling, whatever he came up with. He invents one new trick each night during the study (or when you tap **Invent a new trick now**) and keeps the newest 10. In the **TARS Tricks** list, check a trick to turn it off or delete it to forget it. Pick one in **Show a trick** to see it right away. No tricks between 11 PM and 7 AM.
 
 ## Troubleshooting
 
@@ -109,4 +111,6 @@ Say **"Hey TARS, what's your humor setting?"**
 - **Nightly study does nothing.** The agent must be `conversation.tars`. Check the trace of *TARS - Nightly study* after 3:17 AM.
 - **The cost estimate is off.** Compare with the Anthropic Console usage page and adjust **Avg cost per reply** on the dashboard until they match.
 - **"Hey TARS" misses your voice.** Make it a little more sensitive: in `tars-box.yaml`, add `probability_cutoff: 0.90` under the `hey_tars` model (the default is 0.93) and reflash. Or retrain with your own recordings.
+- **"Show a trick" does nothing.** The *TARS show selected trick* script calls `esphome.tars_box_show_trick`. ESPHome names that action after the box's device name, so if you named the box something other than `tars-box`, change it in the script to `esphome.<your_device_name>_show_trick` (underscores instead of dashes; check **Developer tools → Actions**).
+- **Invent a new trick fails.** The status card shows his last reply. The script tries three times and rejects designs that repeat a trick or break the format, so an occasional failure is normal; try again.
 - **"Hey TARS" wakes up on its own.** Do the opposite: raise the cutoff to 0.95–0.97.
